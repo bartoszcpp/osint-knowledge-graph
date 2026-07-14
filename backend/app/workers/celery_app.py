@@ -1,19 +1,25 @@
 """Celery application entrypoint.
 
 Broker: RabbitMQ (AMQP). Result backend: Redis.
-NER / ingestion tasks will live under `app.workers.tasks` (Phase 2).
+Ingestion tasks live under ``app.workers.tasks`` and are scheduled via Celery Beat.
 """
 
 from __future__ import annotations
 
 from celery import Celery
+from celery.schedules import crontab
+from celery.signals import worker_ready
 
 from app.core.config import settings
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 celery_app = Celery(
     "osint",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
+    include=["app.workers.tasks.ingest"],
 )
 
 celery_app.conf.update(
@@ -24,7 +30,34 @@ celery_app.conf.update(
     enable_utc=True,
     task_track_started=True,
     broker_connection_retry_on_startup=True,
+    result_expires=3600,
 )
+
+# ------------------------------------------------------------------
+# Celery Beat: cron-like periodic ingestion.
+# GDELT refreshes every 15 minutes; Reddit "hot" we poll on the same cadence.
+# ------------------------------------------------------------------
+celery_app.conf.beat_schedule = {
+    "ingest-gdelt": {
+        "task": "ingest.gdelt",
+        "schedule": crontab(minute=f"*/{settings.ingest_gdelt_interval_minutes}"),
+    },
+    "ingest-reddit": {
+        "task": "ingest.reddit",
+        "schedule": crontab(minute=f"*/{settings.ingest_reddit_interval_minutes}"),
+    },
+}
+
+
+@worker_ready.connect
+def _bootstrap_storage(**_: object) -> None:
+    """Ensure the Postgres articles schema exists once the worker is up."""
+    try:
+        from app.db import articles
+
+        articles.init_schema()
+    except Exception:  # pragma: no cover - startup best-effort
+        logger.exception("Failed to initialize Postgres schema on worker startup")
 
 
 @celery_app.task(name="health.ping")

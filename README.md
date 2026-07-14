@@ -11,8 +11,10 @@ Graph** out of them.
 - **Frontend:** React + React Flow / 3D Force-Directed Graph, with clustering and
   client-side virtualization for smooth exploration of thousands of nodes.
 
-> **Status: Phase 1 — Foundations & Infrastructure (DevOps).**
-> The ingestion, NER pipeline, and graph UI land in later phases.
+> **Status: Phase 2 — Ingestion Pipeline.**
+> Celery Beat schedules periodic fetchers (GDELT 2.0 + Reddit) that map every
+> source onto a unified `Article` model and store raw rows in PostgreSQL.
+> The NER pipeline and graph UI land in later phases.
 
 ## Repository layout (monorepo)
 
@@ -36,6 +38,7 @@ Graph** out of them.
 | rabbitmq   | Celery broker + management UI          | 5672, 15672       |
 | api        | FastAPI application                    | 8000              |
 | worker     | Celery worker (NLP / ingestion)        | —                 |
+| beat       | Celery Beat (periodic ingestion cron)  | —                 |
 
 ## Quickstart
 
@@ -70,6 +73,31 @@ python -m scripts.init_neo4j
 cat infra/neo4j/init/01_schema.cypher | cypher-shell -u neo4j -p <password>
 ```
 
+## Ingestion pipeline (Phase 2)
+
+A distributed Celery pipeline periodically pulls fresh data, normalizes it, and
+stores the raw result in PostgreSQL as a durable backup for rebuilding the graph.
+
+- **Scheduler:** Celery Beat fires `ingest.gdelt` and `ingest.reddit` every 15 min
+  (configurable via `INGEST_*_INTERVAL_MINUTES`).
+- **GDELT 2.0:** reads `lastupdate.txt`, downloads the newest 15-minute **GKG**
+  file, and maps each document (URL, timestamp, extracted people/orgs/tone) to an
+  `Article`.
+- **Reddit:** pulls "hot" threads from `r/worldnews` and `r/business` via PRAW
+  (needs `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` and `REDDIT_ENABLED=true`).
+- **Unified model:** every source maps to `app/schemas/article.py::Article`
+  (`id, source, url, title, text_content, published_at` + provenance).
+- **Storage:** `articles` table in PostgreSQL, de-duplicated on a deterministic
+  `id` (`ON CONFLICT DO NOTHING`). Schema is created idempotently on startup.
+
+Trigger a run manually (e.g. to test without waiting for the cron):
+
+```bash
+# from inside the worker container
+celery -A app.workers.celery_app call ingest.gdelt
+celery -A app.workers.celery_app call ingest.reddit
+```
+
 ## Local development
 
 ### Backend
@@ -102,9 +130,11 @@ pre-commit run --all-files
 
 ## Roadmap
 
-- **Phase 1 — Foundations & infra (this):** monorepo, linters, pre-commit,
+- **Phase 1 — Foundations & infra (done):** monorepo, linters, pre-commit,
   docker-compose, FastAPI `/healthcheck`, Neo4j schema & indexes.
-- **Phase 2 — Ingestion & NER:** GDELT/HN/Reddit fetchers, Celery tasks,
-  spaCy/Transformers NER, write entities & relations to Neo4j.
-- **Phase 3 — Graph API & UI:** query endpoints, React Flow / 3D graph,
+- **Phase 2 — Ingestion pipeline (this):** Celery + Beat, GDELT 2.0 & Reddit
+  fetchers, unified `Article` model, raw storage in PostgreSQL.
+- **Phase 3 — NER & graph:** spaCy/Transformers NER over stored articles, write
+  entities & relations to Neo4j.
+- **Phase 4 — Graph API & UI:** query endpoints, React Flow / 3D graph,
   clustering, virtualization, live search.

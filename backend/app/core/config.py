@@ -47,14 +47,43 @@ class Settings(BaseSettings):
     celery_broker_url: str = "amqp://osint:change_me_rabbit@rabbitmq:5672//"
     celery_result_backend: str = "redis://redis:6379/0"
 
-    # ---- Data sources ----
+    # ---- Data sources (feature flags) ----
     gdelt_enabled: bool = True
     hackernews_enabled: bool = True
     reddit_enabled: bool = False
 
+    # ---- GDELT 2.0 ----
+    # Base of the GDELT v2 update feed. `lastupdate.txt` lists the freshest
+    # 15-minute export/mentions/GKG files.
+    gdelt_base_url: str = "http://data.gdeltproject.org/gdeltv2"
+    # Safety cap so a single 15-minute GKG file (can hold tens of thousands of
+    # rows) never floods the pipeline in one run. Set 0 for "no limit".
+    gdelt_gkg_max_records: int = 250
+
+    # ---- Reddit API (PRAW) ----
+    reddit_client_id: str = ""
+    reddit_client_secret: str = ""
+    reddit_user_agent: str = "osint-knowledge-graph/0.1"
+    # Comma-separated list of subreddits to pull "hot" threads from.
+    reddit_subreddits: str = "worldnews,business"
+    reddit_hot_limit: int = 25
+
+    # ---- Ingestion schedule (Celery Beat, minutes) ----
+    ingest_gdelt_interval_minutes: int = 15
+    ingest_reddit_interval_minutes: int = 15
+
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.api_cors_origins.split(",") if o.strip()]
+
+    @property
+    def reddit_subreddit_list(self) -> list[str]:
+        return [s.strip() for s in self.reddit_subreddits.split(",") if s.strip()]
+
+    @property
+    def reddit_configured(self) -> bool:
+        """True when the minimum OAuth credentials for PRAW are present."""
+        return bool(self.reddit_client_id and self.reddit_client_secret)
 
     @property
     def postgres_dsn(self) -> str:

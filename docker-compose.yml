@@ -159,11 +159,35 @@ services:
     volumes:
       - ./backend:/app
     depends_on:
+      postgres:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
       redis:
         condition: service_healthy
       neo4j:
+        condition: service_healthy
+    networks:
+      - osint-net
+
+  # ---------- Celery Beat: periodic (cron) ingestion scheduler ----------
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: osint-beat
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      <<: *common-env
+    command: celery -A app.workers.celery_app beat --loglevel=INFO
+    volumes:
+      - ./backend:/app
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - osint-net
