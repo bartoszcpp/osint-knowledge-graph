@@ -72,6 +72,20 @@ class Settings(BaseSettings):
     ingest_gdelt_interval_minutes: int = 15
     ingest_reddit_interval_minutes: int = 15
 
+    # ---- NLP / NER (Phase 3) ----
+    nlp_enabled: bool = True
+    # spaCy model. Start with the fast `en_core_web_sm`; swap for the more
+    # accurate transformer `en_core_web_trf` later without code changes.
+    spacy_model: str = "en_core_web_sm"
+    # Dedicated Celery queue for CPU-heavy NLP work.
+    nlp_queue_name: str = "nlp_tasks"
+    # Co-occurrence granularity for relation detection: "sentence" or "paragraph".
+    nlp_cooccurrence_scope: str = "sentence"
+    # How many unprocessed articles the dispatcher enqueues per run.
+    nlp_dispatch_batch_size: int = 100
+    # How often Celery Beat scans Postgres for unprocessed articles (minutes).
+    nlp_dispatch_interval_minutes: int = 5
+
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.api_cors_origins.split(",") if o.strip()]

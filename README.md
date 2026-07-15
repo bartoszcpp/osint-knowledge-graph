@@ -11,10 +11,11 @@ Graph** out of them.
 - **Frontend:** React + React Flow / 3D Force-Directed Graph, with clustering and
   client-side virtualization for smooth exploration of thousands of nodes.
 
-> **Status: Phase 2 — Ingestion Pipeline.**
-> Celery Beat schedules periodic fetchers (GDELT 2.0 + Reddit) that map every
-> source onto a unified `Article` model and store raw rows in PostgreSQL.
-> The NER pipeline and graph UI land in later phases.
+> **Status: Phase 3 — NLP & Entity Extraction (NER).**
+> A dedicated CPU-heavy Celery queue runs spaCy over stored articles to extract
+> PERSON / ORG / GPE entities, de-duplicates them within each article, and builds
+> weighted co-occurrence relations. Writing these into the Neo4j graph and the
+> graph UI land in later phases.
 
 ## Repository layout (monorepo)
 
@@ -37,8 +38,9 @@ Graph** out of them.
 | redis      | Cache + Celery result backend          | 6379              |
 | rabbitmq   | Celery broker + management UI          | 5672, 15672       |
 | api        | FastAPI application                    | 8000              |
-| worker     | Celery worker (NLP / ingestion)        | —                 |
-| beat       | Celery Beat (periodic ingestion cron)  | —                 |
+| worker     | Celery worker (ingestion + dispatch)   | —                 |
+| nlp-worker | Celery worker (CPU-heavy NER)          | —                 |
+| beat       | Celery Beat (periodic cron scheduler)  | —                 |
 
 ## Quickstart
 
@@ -98,6 +100,35 @@ celery -A app.workers.celery_app call ingest.gdelt
 celery -A app.workers.celery_app call ingest.reddit
 ```
 
+## NLP & entity extraction (Phase 3)
+
+Stored articles are turned into structured entities and relations by a dedicated
+CPU-heavy Celery queue (`nlp_tasks`, served by the `nlp-worker`).
+
+- **Dispatch:** `nlp.dispatch_pending` (Beat, every `NLP_DISPATCH_INTERVAL_MINUTES`,
+  also fired right after ingestion) scans Postgres for unprocessed articles and
+  fans out one `nlp.process_article` task each, routed to the `nlp_tasks` queue.
+- **NER:** spaCy (`SPACY_MODEL`, default `en_core_web_sm`; swap for the
+  transformer `en_core_web_trf` via the `nlp` extra) extracts `PERSON`, `ORG` and
+  `GPE` entities.
+- **Entity resolution:** a rule-based resolver de-duplicates mentions *within an
+  article* — e.g. "Elon Musk", "Musk" and "E. Musk" collapse to one node.
+- **Relations:** entities co-occurring in the same sentence (or paragraph, via
+  `NLP_COOCCURRENCE_SCOPE`) become weighted undirected edges.
+- **Storage:** results land in `article_entities` / `article_relations`; the
+  source article is stamped `processed_at`.
+
+```bash
+# process everything pending now, without waiting for the scheduler
+celery -A app.workers.celery_app call nlp.dispatch_pending
+
+# inspect results
+docker compose exec postgres psql -U osint -d osint -c \
+  "select type, name, mention_count from article_entities order by mention_count desc limit 10;"
+docker compose exec postgres psql -U osint -d osint -c \
+  "select source_name, target_name, weight from article_relations order by weight desc limit 10;"
+```
+
 ## Local development
 
 ### Backend
@@ -132,9 +163,10 @@ pre-commit run --all-files
 
 - **Phase 1 — Foundations & infra (done):** monorepo, linters, pre-commit,
   docker-compose, FastAPI `/healthcheck`, Neo4j schema & indexes.
-- **Phase 2 — Ingestion pipeline (this):** Celery + Beat, GDELT 2.0 & Reddit
+- **Phase 2 — Ingestion pipeline (done):** Celery + Beat, GDELT 2.0 & Reddit
   fetchers, unified `Article` model, raw storage in PostgreSQL.
-- **Phase 3 — NER & graph:** spaCy/Transformers NER over stored articles, write
-  entities & relations to Neo4j.
-- **Phase 4 — Graph API & UI:** query endpoints, React Flow / 3D graph,
-  clustering, virtualization, live search.
+- **Phase 3 — NLP & entity extraction (this):** dedicated `nlp_tasks` queue,
+  spaCy NER (PERSON/ORG/GPE), in-article entity resolution, co-occurrence
+  relations stored in PostgreSQL.
+- **Phase 4 — Knowledge graph & UI:** write entities/relations to Neo4j, query
+  endpoints, React Flow / 3D graph, clustering, virtualization, live search.

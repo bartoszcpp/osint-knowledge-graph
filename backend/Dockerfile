@@ -15,6 +15,11 @@ RUN apt-get update \
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
 
+# Download the default spaCy NER model (Phase 3). Override SPACY_MODEL at build
+# time to bake in a different model (e.g. en_core_web_trf).
+ARG SPACY_MODEL=en_core_web_sm
+RUN python -m spacy download ${SPACY_MODEL}
+
 COPY . .
 
 EXPOSE 8000

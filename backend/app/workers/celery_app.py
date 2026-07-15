@@ -19,7 +19,7 @@ celery_app = Celery(
     "osint",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["app.workers.tasks.ingest"],
+    include=["app.workers.tasks.ingest", "app.workers.tasks.nlp"],
 )
 
 celery_app.conf.update(
@@ -31,7 +31,14 @@ celery_app.conf.update(
     task_track_started=True,
     broker_connection_retry_on_startup=True,
     result_expires=3600,
+    task_default_queue="celery",
 )
+
+# Route CPU-heavy NER work to a dedicated queue so it can be scaled/isolated
+# independently from the lightweight ingestion + dispatch tasks.
+celery_app.conf.task_routes = {
+    "nlp.process_article": {"queue": settings.nlp_queue_name},
+}
 
 # ------------------------------------------------------------------
 # Celery Beat: cron-like periodic ingestion.
@@ -46,16 +53,21 @@ celery_app.conf.beat_schedule = {
         "task": "ingest.reddit",
         "schedule": crontab(minute=f"*/{settings.ingest_reddit_interval_minutes}"),
     },
+    "nlp-dispatch-pending": {
+        "task": "nlp.dispatch_pending",
+        "schedule": crontab(minute=f"*/{settings.nlp_dispatch_interval_minutes}"),
+    },
 }
 
 
 @worker_ready.connect
 def _bootstrap_storage(**_: object) -> None:
-    """Ensure the Postgres articles schema exists once the worker is up."""
+    """Ensure the Postgres schema exists once the worker is up."""
     try:
-        from app.db import articles
+        from app.db import analysis, articles
 
         articles.init_schema()
+        analysis.init_schema()
     except Exception:  # pragma: no cover - startup best-effort
         logger.exception("Failed to initialize Postgres schema on worker startup")
 

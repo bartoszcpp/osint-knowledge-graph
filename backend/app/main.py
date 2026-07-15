@@ -11,7 +11,7 @@ from app import __version__
 from app.api.routes import health
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.db import articles, neo4j, postgres
+from app.db import analysis, articles, neo4j, postgres
 
 logger = get_logger(__name__)
 
@@ -31,6 +31,7 @@ async def lifespan(app: FastAPI):
     try:
         if postgres.verify_connectivity():
             articles.init_schema()
+            analysis.init_schema()
         else:
             logger.warning("Skipping Postgres schema init - database not reachable yet")
     except Exception:  # noqa: BLE001 - never block startup on schema init

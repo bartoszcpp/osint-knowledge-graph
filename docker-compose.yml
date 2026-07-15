@@ -144,7 +144,7 @@ services:
     networks:
       - osint-net
 
-  # ---------- Celery worker (NLP / ingestion) ----------
+  # ---------- Celery worker: ingestion + dispatch (default queue) ----------
   worker:
     build:
       context: ./backend
@@ -155,7 +155,7 @@ services:
       - .env
     environment:
       <<: *common-env
-    command: celery -A app.workers.celery_app worker --loglevel=INFO
+    command: celery -A app.workers.celery_app worker -Q celery --loglevel=INFO
     volumes:
       - ./backend:/app
     depends_on:
@@ -166,6 +166,30 @@ services:
       redis:
         condition: service_healthy
       neo4j:
+        condition: service_healthy
+    networks:
+      - osint-net
+
+  # ---------- Celery NLP worker: CPU-heavy NER (nlp_tasks queue) ----------
+  nlp-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: osint-nlp-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      <<: *common-env
+    command: celery -A app.workers.celery_app worker -Q nlp_tasks --concurrency=2 --loglevel=INFO
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - osint-net

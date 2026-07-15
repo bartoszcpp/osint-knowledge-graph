@@ -38,6 +38,8 @@ def ingest_gdelt(self) -> dict[str, Any]:
         logger.exception("GDELT ingestion failed")
         raise self.retry(exc=exc) from exc
 
+    if stored:
+        _trigger_nlp_dispatch()
     return {"source": "gdelt", "fetched": len(fetched), "stored": stored}
 
 
@@ -61,4 +63,12 @@ def ingest_reddit(self) -> dict[str, Any]:
         logger.exception("Reddit ingestion failed")
         raise self.retry(exc=exc) from exc
 
+    if stored:
+        _trigger_nlp_dispatch()
     return {"source": "reddit", "fetched": len(fetched), "stored": stored}
+
+
+def _trigger_nlp_dispatch() -> None:
+    """Kick off NLP processing promptly instead of waiting for the Beat tick."""
+    if settings.nlp_enabled:
+        celery_app.send_task("nlp.dispatch_pending")
