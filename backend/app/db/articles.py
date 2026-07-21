@@ -31,12 +31,16 @@ CREATE TABLE IF NOT EXISTS articles (
     raw           JSONB       NOT NULL DEFAULT '{}'::jsonb,
     fetched_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    processed_at  TIMESTAMPTZ
+    processed_at  TIMESTAMPTZ,
+    graphed_at    TIMESTAMPTZ
 )
 """
 
-# For databases created before Phase 3, add the NLP tracking column in place.
-_MIGRATIONS = ("ALTER TABLE articles ADD COLUMN IF NOT EXISTS processed_at TIMESTAMPTZ",)
+# For databases created before Phase 3/4, add the tracking columns in place.
+_MIGRATIONS = (
+    "ALTER TABLE articles ADD COLUMN IF NOT EXISTS processed_at TIMESTAMPTZ",
+    "ALTER TABLE articles ADD COLUMN IF NOT EXISTS graphed_at TIMESTAMPTZ",
+)
 
 _INDEXES = (
     "CREATE UNIQUE INDEX IF NOT EXISTS articles_url_key ON articles (url)",
@@ -45,6 +49,9 @@ _INDEXES = (
     # Partial index: the NLP dispatcher only ever scans unprocessed rows.
     "CREATE INDEX IF NOT EXISTS articles_unprocessed_idx "
     "ON articles (fetched_at) WHERE processed_at IS NULL",
+    # Partial index: the graph sync only ever scans analyzed-but-not-graphed rows.
+    "CREATE INDEX IF NOT EXISTS articles_ungraphed_idx "
+    "ON articles (processed_at) WHERE processed_at IS NOT NULL AND graphed_at IS NULL",
 )
 
 _COLUMNS = ("id", "source", "url", "title", "text_content", "published_at", "raw", "fetched_at")
@@ -129,6 +136,16 @@ def fetch_article(article_id: str) -> Article | None:
     return _row_to_article(row) if row else None
 
 
+def fetch_articles(article_ids: Sequence[str]) -> list[Article]:
+    """Load multiple articles by id in a single query."""
+    if not article_ids:
+        return []
+    query = f"SELECT {_SELECT_COLUMNS} FROM articles WHERE id = ANY(%s)"  # noqa: S608 - fixed columns
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(query, (list(article_ids),))
+        return [_row_to_article(row) for row in cur.fetchall()]
+
+
 def fetch_unprocessed_ids(limit: int) -> list[str]:
     """Return ids of articles that have not been through NLP yet (oldest first)."""
     query = "SELECT id FROM articles WHERE processed_at IS NULL ORDER BY fetched_at LIMIT %s"
@@ -137,11 +154,33 @@ def fetch_unprocessed_ids(limit: int) -> list[str]:
         return [row[0] for row in cur.fetchall()]
 
 
+def fetch_analyzed_not_graphed_ids(limit: int) -> list[str]:
+    """Return ids of analyzed articles not yet written to the graph (oldest first)."""
+    query = (
+        "SELECT id FROM articles "
+        "WHERE processed_at IS NOT NULL AND graphed_at IS NULL "
+        "ORDER BY processed_at LIMIT %s"
+    )
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(query, (limit,))
+        return [row[0] for row in cur.fetchall()]
+
+
 def mark_processed(article_ids: Sequence[str]) -> None:
     """Stamp ``processed_at`` on the given articles."""
+    _stamp("processed_at", article_ids)
+
+
+def mark_graphed(article_ids: Sequence[str]) -> None:
+    """Stamp ``graphed_at`` on the given articles."""
+    _stamp("graphed_at", article_ids)
+
+
+def _stamp(column: str, article_ids: Sequence[str]) -> None:
     if not article_ids:
         return
-    query = "UPDATE articles SET processed_at = now() WHERE id = ANY(%s)"
+    # `column` is a fixed internal literal, never user input.
+    query = f"UPDATE articles SET {column} = now() WHERE id = ANY(%s)"  # noqa: S608
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute(query, (list(article_ids),))
         conn.commit()

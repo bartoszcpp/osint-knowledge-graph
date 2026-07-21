@@ -19,7 +19,11 @@ celery_app = Celery(
     "osint",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["app.workers.tasks.ingest", "app.workers.tasks.nlp"],
+    include=[
+        "app.workers.tasks.ingest",
+        "app.workers.tasks.nlp",
+        "app.workers.tasks.graph",
+    ],
 )
 
 celery_app.conf.update(
@@ -56,6 +60,10 @@ celery_app.conf.beat_schedule = {
     "nlp-dispatch-pending": {
         "task": "nlp.dispatch_pending",
         "schedule": crontab(minute=f"*/{settings.nlp_dispatch_interval_minutes}"),
+    },
+    "graph-sync-pending": {
+        "task": "graph.sync_pending",
+        "schedule": crontab(minute=f"*/{settings.graph_sync_interval_minutes}"),
     },
 }
 

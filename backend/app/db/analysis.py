@@ -10,9 +10,12 @@ article are replaced, so re-processing never duplicates data.
 
 from __future__ import annotations
 
+from collections import defaultdict
+from collections.abc import Sequence
+
 from app.core.logging import get_logger
 from app.db.postgres import get_connection
-from app.schemas.analysis import ArticleAnalysis
+from app.schemas.analysis import ArticleAnalysis, EntityType, Relation, ResolvedEntity
 
 logger = get_logger(__name__)
 
@@ -118,3 +121,61 @@ def save_analysis(analysis: ArticleAnalysis) -> None:
         len(analysis.entities),
         len(analysis.relations),
     )
+
+
+def fetch_analyses(article_ids: Sequence[str]) -> list[ArticleAnalysis]:
+    """Reconstruct stored analyses (entities + relations) for the given articles."""
+    if not article_ids:
+        return []
+    ids = list(article_ids)
+
+    entities_by_article: dict[str, list[ResolvedEntity]] = defaultdict(list)
+    relations_by_article: dict[str, list[Relation]] = defaultdict(list)
+
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT article_id, canonical_id, name, type, mention_count, surface_forms "
+            "FROM article_entities WHERE article_id = ANY(%s)",
+            (ids,),
+        )
+        for article_id, canonical, name, etype, count, surfaces in cur.fetchall():
+            entities_by_article[article_id].append(
+                ResolvedEntity(
+                    canonical_id=canonical,
+                    name=name,
+                    type=EntityType(etype),
+                    surface_forms=surfaces or [],
+                    mention_count=count,
+                )
+            )
+
+        cur.execute(
+            "SELECT article_id, source_id, target_id, source_name, target_name, "
+            "source_type, target_type, weight, scope "
+            "FROM article_relations WHERE article_id = ANY(%s)",
+            (ids,),
+        )
+        for row in cur.fetchall():
+            article_id = row[0]
+            relations_by_article[article_id].append(
+                Relation(
+                    source_id=row[1],
+                    target_id=row[2],
+                    source_name=row[3],
+                    target_name=row[4],
+                    source_type=EntityType(row[5]),
+                    target_type=EntityType(row[6]),
+                    weight=row[7],
+                    scope=row[8],
+                )
+            )
+
+    return [
+        ArticleAnalysis(
+            article_id=article_id,
+            entities=entities_by_article.get(article_id, []),
+            relations=relations_by_article.get(article_id, []),
+        )
+        for article_id in ids
+        if article_id in entities_by_article or article_id in relations_by_article
+    ]

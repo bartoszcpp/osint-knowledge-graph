@@ -86,6 +86,14 @@ class Settings(BaseSettings):
     # How often Celery Beat scans Postgres for unprocessed articles (minutes).
     nlp_dispatch_interval_minutes: int = 5
 
+    # ---- Knowledge graph sync (Phase 4) ----
+    graph_sync_enabled: bool = True
+    # Articles pushed to Neo4j per batch. UNWIND writes the whole batch in one
+    # transaction instead of thousands of tiny queries.
+    graph_sync_batch_size: int = 100
+    # How often Celery Beat flushes analyzed-but-not-graphed articles to Neo4j.
+    graph_sync_interval_minutes: int = 5
+
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.api_cors_origins.split(",") if o.strip()]

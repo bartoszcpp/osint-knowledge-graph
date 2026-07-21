@@ -17,31 +17,26 @@ logger = get_logger(__name__)
 
 _driver: Driver | None = None
 
-# Entity labels tracked in the graph. Each has a unique business key.
+# Node labels tracked in the graph.
+#   Entity  - a resolved PERSON/ORG/GPE (property `type` distinguishes them).
+#   Article - a source document the entity was mentioned in.
 ENTITY_LABELS: tuple[str, ...] = (
-    "Person",
-    "Organization",
-    "Location",
-    "Event",
+    "Entity",
     "Article",
 )
 
 # Constraints guarantee uniqueness AND create a backing range index -> O(1) lookups.
 CONSTRAINTS: dict[str, str] = {
-    "Person": "person_name",
-    "Organization": "org_name",
-    "Location": "location_name",
-    "Event": "event_id",
-    "Article": "article_url",
+    "Entity": "canonical_id",
+    "Article": "url",
 }
 
 # Additional non-unique indexes for common filter/search fields.
 EXTRA_INDEXES: list[tuple[str, str]] = [
+    ("Entity", "type"),
+    ("Entity", "name"),
     ("Article", "published_at"),
     ("Article", "source"),
-    ("Event", "occurred_at"),
-    ("Person", "canonical_id"),
-    ("Organization", "canonical_id"),
 ]
 
 

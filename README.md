@@ -11,11 +11,11 @@ Graph** out of them.
 - **Frontend:** React + React Flow / 3D Force-Directed Graph, with clustering and
   client-side virtualization for smooth exploration of thousands of nodes.
 
-> **Status: Phase 3 — NLP & Entity Extraction (NER).**
-> A dedicated CPU-heavy Celery queue runs spaCy over stored articles to extract
-> PERSON / ORG / GPE entities, de-duplicates them within each article, and builds
-> weighted co-occurrence relations. Writing these into the Neo4j graph and the
-> graph UI land in later phases.
+> **Status: Phase 4 — Knowledge Graph (Neo4j).**
+> Analyzed entities and relations are flushed into Neo4j in batches: `Entity` and
+> `Article` nodes, `(:Entity)-[:MENTIONED_IN]->(:Article)` edges, and undirected
+> `(:Entity)-[:CO_OCCURS_WITH {weight}]-(:Entity)` edges whose weight grows each
+> time two entities meet in another article. The query API and graph UI land next.
 
 ## Repository layout (monorepo)
 
@@ -129,6 +129,39 @@ docker compose exec postgres psql -U osint -d osint -c \
   "select source_name, target_name, weight from article_relations order by weight desc limit 10;"
 ```
 
+## Knowledge graph (Phase 4)
+
+Analyzed articles are flushed into Neo4j by `graph.sync_pending` (Beat, every
+`GRAPH_SYNC_INTERVAL_MINUTES`), which pulls a batch of articles that are
+NER-processed but not yet graphed and writes them with a few `UNWIND`-driven
+Cypher statements — one round-trip per node/edge type instead of thousands of
+small queries.
+
+- **Nodes:** `(:Entity {canonical_id, name, type})` and
+  `(:Article {url, article_id, title, published_at, source})`.
+- **Mentions:** `(:Entity)-[:MENTIONED_IN {count}]->(:Article)`.
+- **Co-occurrence:** undirected `(:Entity)-[:CO_OCCURS_WITH {weight}]-(:Entity)`;
+  `weight` is incremented every time the pair co-occurs in another article.
+- **Idempotent & batched:** every write `MERGE`s on the unique key; the batch size
+  is `GRAPH_SYNC_BATCH_SIZE` (default 100 articles).
+
+```bash
+# flush pending articles to Neo4j now
+celery -A app.workers.celery_app call graph.sync_pending
+```
+
+Explore in the Neo4j Browser (http://localhost:7474):
+
+```cypher
+// strongest connections in the graph
+MATCH (a:Entity)-[r:CO_OCCURS_WITH]-(b:Entity)
+RETURN a.name, b.name, r.weight ORDER BY r.weight DESC LIMIT 25;
+
+// everything mentioned in a given article
+MATCH (e:Entity)-[:MENTIONED_IN]->(a:Article)
+RETURN a.title, collect(e.name) LIMIT 10;
+```
+
 ## Local development
 
 ### Backend
@@ -165,8 +198,11 @@ pre-commit run --all-files
   docker-compose, FastAPI `/healthcheck`, Neo4j schema & indexes.
 - **Phase 2 — Ingestion pipeline (done):** Celery + Beat, GDELT 2.0 & Reddit
   fetchers, unified `Article` model, raw storage in PostgreSQL.
-- **Phase 3 — NLP & entity extraction (this):** dedicated `nlp_tasks` queue,
+- **Phase 3 — NLP & entity extraction (done):** dedicated `nlp_tasks` queue,
   spaCy NER (PERSON/ORG/GPE), in-article entity resolution, co-occurrence
   relations stored in PostgreSQL.
-- **Phase 4 — Knowledge graph & UI:** write entities/relations to Neo4j, query
-  endpoints, React Flow / 3D graph, clustering, virtualization, live search.
+- **Phase 4 — Knowledge graph (this):** batched `UNWIND` writes of entities and
+  relations into Neo4j (`Entity`/`Article` nodes, `MENTIONED_IN` +
+  `CO_OCCURS_WITH` edges with cumulative weights).
+- **Phase 5 — Graph API & UI:** query endpoints, React Flow / 3D graph,
+  clustering, virtualization, live search.
