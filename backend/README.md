@@ -9,11 +9,13 @@ app/
 ├── main.py            # FastAPI app factory + lifespan (Neo4j + Postgres schema init)
 ├── core/
 │   ├── config.py      # pydantic-settings configuration
-│   └── logging.py     # logging setup
+│   ├── logging.py     # logging setup
+│   └── cache.py       # best-effort Redis JSON cache for graph reads (Phase 5)
 ├── schemas/
 │   ├── article.py     # unified Article model + SourceType (source-agnostic)
 │   ├── analysis.py    # EntityType, EntityMention, ResolvedEntity, Relation
-│   └── graph.py       # GraphBatch payload (UNWIND rows for Neo4j)
+│   ├── graph.py       # GraphBatch payload (UNWIND rows for Neo4j)
+│   └── api.py         # API response models (entities, ego-graph, articles)
 ├── db/
 │   ├── neo4j.py       # driver + schema (Entity/Article constraints & indexes)
 │   ├── postgres.py    # connection helper
@@ -28,9 +30,11 @@ app/
 │   ├── relations.py   # co-occurrence relation detection
 │   └── processor.py   # orchestrator: Article -> ArticleAnalysis
 ├── graph/
-│   └── writer.py      # batched UNWIND payload builder + Neo4j writes
+│   ├── writer.py      # batched UNWIND payload builder + Neo4j writes
+│   └── reader.py      # graph read queries (top entities, ego-graph, articles)
 ├── api/routes/
-│   └── health.py      # /healthcheck, /readiness
+│   ├── health.py      # /healthcheck, /readiness
+│   └── graph.py       # /entities, /graph/{id}, /articles (paginated + cached)
 └── workers/
     ├── celery_app.py  # Celery app + Beat + nlp_tasks queue routing
     └── tasks/
@@ -48,7 +52,8 @@ tests/
 ├── test_nlp_relations.py
 ├── test_nlp_processor.py
 ├── test_nlp_pipeline.py   # spaCy integration (auto-skips without the model)
-└── test_graph_writer.py   # batched payload builder
+├── test_graph_writer.py   # batched payload builder
+└── test_api_graph.py      # Phase 5 API (reader + cache mocked)
 ```
 
 ## Commands

@@ -11,11 +11,11 @@ Graph** out of them.
 - **Frontend:** React + React Flow / 3D Force-Directed Graph, with clustering and
   client-side virtualization for smooth exploration of thousands of nodes.
 
-> **Status: Phase 4 — Knowledge Graph (Neo4j).**
-> Analyzed entities and relations are flushed into Neo4j in batches: `Entity` and
-> `Article` nodes, `(:Entity)-[:MENTIONED_IN]->(:Article)` edges, and undirected
-> `(:Entity)-[:CO_OCCURS_WITH {weight}]-(:Entity)` edges whose weight grows each
-> time two entities meet in another article. The query API and graph UI land next.
+> **Status: Phase 5 — Graph API (FastAPI).**
+> The knowledge graph is now queryable over HTTP: trending entities in a time
+> window, an ego-graph around any entity (1–2 hops), and the articles that link
+> two entities together. Every endpoint supports time filters and the hottest
+> reads are cached in Redis for a few minutes. The React graph UI lands next.
 
 ## Repository layout (monorepo)
 
@@ -162,6 +162,37 @@ MATCH (e:Entity)-[:MENTIONED_IN]->(a:Article)
 RETURN a.title, collect(e.name) LIMIT 10;
 ```
 
+## Graph API (Phase 5)
+
+FastAPI exposes the graph to the frontend. All endpoints are paginated and
+support **time filters**; expensive reads are cached in Redis for
+`CACHE_TTL_SECONDS` (default 5 min, best-effort — a Redis outage only slows
+things down, it never breaks the API).
+
+- **`GET /entities`** — most-mentioned entities in the last `window_hours`
+  (default 24h). Params: `window_hours`, `type` (PERSON/ORG/GPE), `limit`,
+  `offset`. Ranked by distinct article count.
+- **`GET /graph/{entity_id}`** — ego-graph around an entity: the center, its
+  neighbors up to `depth` hops (1 or 2), and the edges between them. Params:
+  `depth`, `limit` (neighbors per hop), `min_weight`, `window_days`. Without
+  `window_days` it reads the pre-aggregated `CO_OCCURS_WITH` weights; with it,
+  co-occurrence is recomputed from shared articles inside the window.
+- **`GET /articles`** — the articles that connect two entities (the evidence
+  behind an edge). Params: `source`, `target`, `window_days`, `limit`, `offset`.
+
+```bash
+# top people in the last 48h
+curl 'http://localhost:8000/entities?window_hours=48&type=PERSON&limit=10'
+
+# 2-hop ego-graph, connections from the last week only
+curl 'http://localhost:8000/graph/person:elon-musk?depth=2&window_days=7'
+
+# articles linking two entities
+curl 'http://localhost:8000/articles?source=person:elon-musk&target=org:tesla'
+```
+
+Interactive docs: http://localhost:8000/docs.
+
 ## Local development
 
 ### Backend
@@ -201,8 +232,10 @@ pre-commit run --all-files
 - **Phase 3 — NLP & entity extraction (done):** dedicated `nlp_tasks` queue,
   spaCy NER (PERSON/ORG/GPE), in-article entity resolution, co-occurrence
   relations stored in PostgreSQL.
-- **Phase 4 — Knowledge graph (this):** batched `UNWIND` writes of entities and
+- **Phase 4 — Knowledge graph (done):** batched `UNWIND` writes of entities and
   relations into Neo4j (`Entity`/`Article` nodes, `MENTIONED_IN` +
   `CO_OCCURS_WITH` edges with cumulative weights).
-- **Phase 5 — Graph API & UI:** query endpoints, React Flow / 3D graph,
-  clustering, virtualization, live search.
+- **Phase 5 — Graph API (this):** FastAPI endpoints for trending entities,
+  ego-graphs, and connecting articles, with time filters and Redis caching.
+- **Phase 6 — Graph UI:** React Flow / 3D graph, clustering, virtualization,
+  live search.

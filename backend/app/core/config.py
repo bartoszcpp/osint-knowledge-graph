@@ -94,6 +94,23 @@ class Settings(BaseSettings):
     # How often Celery Beat flushes analyzed-but-not-graphed articles to Neo4j.
     graph_sync_interval_minutes: int = 5
 
+    # ---- Graph API (Phase 5) ----
+    # Default time window (hours) for the "trending entities" endpoint.
+    api_entities_window_hours: int = 24
+    # Neighbor fan-out limits for the ego-graph endpoint.
+    graph_default_neighbor_limit: int = 25
+    graph_max_neighbor_limit: int = 200
+    # Default pagination page size and hard cap.
+    api_default_page_size: int = 50
+    api_max_page_size: int = 200
+
+    # ---- Redis cache (Phase 5) ----
+    cache_enabled: bool = True
+    # TTL for cached graph queries (seconds). Graph reads are expensive, so we
+    # cache the hottest ones for a few minutes.
+    cache_ttl_seconds: int = 300
+    cache_key_prefix: str = "osint:cache"
+
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.api_cors_origins.split(",") if o.strip()]

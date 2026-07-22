@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api.routes import health
+from app.api.routes import graph, health
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.db import analysis, articles, neo4j, postgres
@@ -60,6 +60,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(health.router)
+    app.include_router(graph.router)
 
     @app.get("/", tags=["root"], summary="Service root")
     def root() -> dict[str, str]:
